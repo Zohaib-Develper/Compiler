@@ -397,7 +397,7 @@ string identifyLexem(String2DArray &transitionTable)
         }
 
         nextState = transitionTable.getValue(to_string(nextState), string() + c);
-        cout << "NEXT STATE FOR :" << c << " is" << nextState << endl;
+        // cout << "NEXT STATE FOR :" << c << " is" << nextState << endl;
 
         if (nextState == -1 || nextState == 0)
         {
@@ -436,11 +436,12 @@ string identifyLexem(String2DArray &transitionTable)
     return "";
 }
 
-void Compile(string filename)
+vector<Token> Compile(string filename)
 {
     // Open token output file.
     ofstream tokenFile("token.txt");
     ofstream errorFile("error.txt");
+    vector<Token> tokens;
 
     int i = 0;
     // Process tokens until EOF is reached.
@@ -515,6 +516,7 @@ void Compile(string filename)
             if (token.lexeme.length() > 0)
             {
                 i = 0;
+                tokens.push_back(token);
                 cout << "Token Type: " << token.type << "  Lexeme: " << token.lexeme << "\n";
                 tokenFile << "Token Type: " << token.type << "  Lexeme: " << token.lexeme << "\n";
             }
@@ -528,8 +530,397 @@ void Compile(string filename)
         errorFile.close();
     }
     tokenFile.close();
+    return tokens;
 }
 
+struct ParseNode
+{
+    string label;                 // Non-terminal or token
+    vector<ParseNode *> children; // Child nodes
+
+    ParseNode(const string &l) : label(l) {}
+
+    void addChild(ParseNode *child)
+    {
+        if (child)
+            children.push_back(child);
+    }
+
+    void print(int indent = 0) const
+    {
+        cout << string(indent, ' ') << label << endl;
+        for (const auto &child : children)
+        {
+            child->print(indent + 2);
+        }
+    }
+};
+
+class Parser
+{
+private:
+    vector<Token> tokens;
+    int current;
+
+    Token peek()
+    {
+        if (current < tokens.size())
+            return tokens[current];
+        return {"", ""};
+    }
+
+    Token get()
+    {
+        if (current < tokens.size())
+            return tokens[current++];
+        return {"", ""};
+    }
+
+    void error(const string &msg)
+    {
+        cout << "Error: " << msg << " at token: " << peek().lexeme << endl;
+        exit(1);
+    }
+
+    bool isTypeToken(const Token &token)
+    {
+        return token.lexeme == "Adadi" || token.lexeme == "Ashriya" || token.lexeme == "Harf" || token.lexeme == "Matn" || token.lexeme == "Mantiqi";
+    }
+
+    bool isCompare(const Token &token)
+    {
+        return token.lexeme == "==" || token.lexeme == "<" || token.lexeme == ">" ||
+               token.lexeme == "<=" || token.lexeme == ">=" || token.lexeme == "!=" ||
+               token.lexeme == "<>";
+    }
+
+    ParseNode *match(string expectedLexeme)
+    {
+        Token t = get();
+        if (t.lexeme != expectedLexeme)
+            error("Expected '" + expectedLexeme + "'");
+        return new ParseNode("'" + t.lexeme + "'");
+    }
+
+    ParseNode *matchTypeProduction()
+    {
+        Token t = get();
+        if (!isTypeToken(t))
+            error("Expected 'Type Keyword'");
+        ParseNode *typeNode = new ParseNode("Type");
+        typeNode->addChild(new ParseNode("'" + t.lexeme + "'"));
+        return typeNode;
+    }
+
+    ParseNode *matchType(string expectedType)
+    {
+        Token t = get();
+        if (t.type != expectedType)
+            error("Expected type " + expectedType);
+        return new ParseNode(t.lexeme);
+    }
+
+    ParseNode *Function()
+    {
+        ParseNode *node = new ParseNode("Function");
+        node->addChild(matchTypeProduction()); // type
+        node->addChild(matchType("identifier"));
+        node->addChild(match("("));
+
+        node->addChild(ArgList());
+        cout << "GOING FOR SECONGD:" << peek().lexeme << endl;
+        node->addChild(match(")"));
+
+        node->addChild(CompStmt());
+        return node;
+    }
+
+    ParseNode *ArgPrime()
+    {
+        ParseNode *node = new ParseNode("ArgPrime");
+        while (peek().lexeme == ",")
+        {
+            node->addChild(match(","));
+            node->addChild(Arg());
+        }
+        return node;
+    }
+
+    ParseNode *ArgList()
+    {
+        ParseNode *node = new ParseNode("ArgList");
+        if (isTypeToken(peek()))
+            node->addChild(Arg());
+        node->addChild(ArgPrime());
+        return node;
+    }
+
+    ParseNode *Arg()
+    {
+        ParseNode *node = new ParseNode("Arg");
+        node->addChild(matchTypeProduction()); // type
+        node->addChild(matchType("identifier"));
+        return node;
+    }
+
+    ParseNode *Declaration()
+    {
+        ParseNode *node = new ParseNode("Declaration");
+        node->addChild(match(peek().lexeme));
+        node->addChild(IdentList());
+        node->addChild(match("::"));
+        return node;
+    }
+    ParseNode *BPrime()
+    {
+        ParseNode *node = new ParseNode("BPrime");
+        if (peek().lexeme == ",")
+        {
+            node->addChild(match(","));
+            node->addChild(IdentList());
+            node->addChild(BPrime());
+        }
+        return node;
+    }
+
+    ParseNode *IdentList()
+    {
+        ParseNode *node = new ParseNode("IdentList");
+        node->addChild(matchType("identifier"));
+        node->addChild(BPrime());
+        return node;
+    }
+
+    ParseNode *Stmt()
+    {
+        ParseNode *node = new ParseNode("Stmt");
+        cout << "STMT: " << peek().lexeme << endl;
+        Token t = peek();
+        if (t.lexeme == "for")
+            node->addChild(ForStmt());
+        else if (t.lexeme == "while")
+            node->addChild(WhileStmt());
+        else if (t.lexeme == "Agar")
+            node->addChild(IfStmt());
+        else if (t.lexeme == "{")
+            node->addChild(CompStmt());
+        else if (isTypeToken(t))
+            node->addChild(Declaration());
+        else if (t.type == "identifier")
+        {
+            node->addChild(Expr());
+            node->addChild(match("::"));
+        }
+        else if (t.lexeme == "::")
+        {
+            node->addChild(match("::"));
+        }
+        else
+        {
+            error("Invalid statement");
+        }
+
+        cout << "GOING OUT" << peek().lexeme << endl;
+        return node;
+    }
+
+    ParseNode *ForStmt()
+    {
+        ParseNode *node = new ParseNode("ForStmt");
+        node->addChild(match("for"));
+        node->addChild(match("("));
+        node->addChild(Expr());
+        node->addChild(match("::"));
+        if (peek().lexeme != "::")
+            node->addChild(Expr());
+        node->addChild(match("::"));
+        if (peek().lexeme != ")")
+            node->addChild(Expr());
+        node->addChild(match(")"));
+        node->addChild(Stmt());
+        return node;
+    }
+
+    ParseNode *WhileStmt()
+    {
+        ParseNode *node = new ParseNode("WhileStmt");
+        node->addChild(match("while"));
+        node->addChild(match("("));
+        node->addChild(Expr());
+        node->addChild(match(")"));
+        node->addChild(Stmt());
+        return node;
+    }
+
+    ParseNode *IfStmt()
+    {
+        cout << "IF STMT" << endl;
+        ParseNode *node = new ParseNode("IfStmt");
+        cout << "CHECKING FOR STMT: " << peek().lexeme << endl;
+        node->addChild(match("Agar"));
+        node->addChild(match("("));
+        node->addChild(Expr());
+        node->addChild(match(")"));
+        node->addChild(Stmt());
+        node->addChild(ElsePart());
+        return node;
+    }
+
+    ParseNode *ElsePart()
+    {
+        ParseNode *node = new ParseNode("ElsePart");
+        if (peek().lexeme == "Wagarna")
+        {
+            node->addChild(match("Wagarna"));
+            node->addChild(Stmt());
+        }
+        return node;
+    }
+
+    ParseNode *CompStmt()
+    {
+        ParseNode *node = new ParseNode("CompStmt");
+        node->addChild(match("{"));
+        node->addChild(StmtList());
+        cout << "CUR: " << peek().lexeme << endl;
+        node->addChild(match("}"));
+        return node;
+    }
+
+    ParseNode *CPrime()
+    {
+        ParseNode *node = new ParseNode("CPrime");
+        // while (peek().lexeme != "}" && peek().lexeme != "")
+        //{
+        node->addChild(Stmt());
+        cout << "PR: " << peek().lexeme << endl;
+        if (peek().lexeme != "}" && peek().lexeme != "")
+            node->addChild(CPrime());
+        return node;
+        //}
+    }
+    ParseNode *StmtList()
+    {
+        ParseNode *node = new ParseNode("StmtList");
+        node->addChild(CPrime());
+        cout << "@: " << peek().lexeme << endl;
+        return node;
+    }
+
+    ParseNode *Expr()
+    {
+        ParseNode *node = new ParseNode("Expr");
+        Token t = peek();
+        Token next = tokens[current + 1];
+
+        if (next.lexeme == ":=")
+        {
+            node->addChild(matchType("identifier"));
+            node->addChild(match(":="));
+            node->addChild(Expr());
+            return node;
+        }
+        else
+        {
+            cout << "RVALUE: " << endl;
+            cout << "PEEK " << peek().lexeme << endl;
+            node->addChild(Rvalue());
+        }
+        return node;
+    }
+
+    ParseNode *DPrime()
+    {
+        ParseNode *node = new ParseNode("DPrime");
+        if (isCompare(peek()))
+        {
+            node->addChild(match(peek().lexeme));
+            node->addChild(Mag());
+            node->addChild(DPrime());
+        }
+        return node;
+    }
+    ParseNode *Rvalue()
+    {
+        ParseNode *node = new ParseNode("Rvalue");
+        node->addChild(Mag());
+        node->addChild(DPrime());
+        return node;
+    }
+    ParseNode *EPrime()
+    {
+        ParseNode *node = new ParseNode("EPrime");
+        if (peek().lexeme == "+" || peek().lexeme == "-")
+        {
+            node->addChild(match(peek().lexeme));
+            node->addChild(Term());
+            node->addChild(EPrime());
+        }
+        return node;
+    }
+
+    ParseNode *Mag()
+    {
+        ParseNode *node = new ParseNode("Mag");
+        node->addChild(Term());
+        node->addChild(EPrime());
+        return node;
+    }
+    ParseNode *HPrime()
+    {
+        ParseNode *node = new ParseNode("HPrime");
+        if (peek().lexeme == "*" || peek().lexeme == "/")
+        {
+            node->addChild(match(peek().lexeme));
+            node->addChild(Factor());
+            node->addChild(HPrime());
+        }
+        return node;
+    }
+    ParseNode *Term()
+    {
+        ParseNode *node = new ParseNode("Term");
+        node->addChild(Factor());
+        node->addChild(HPrime());
+
+        return node;
+    }
+
+    ParseNode *Factor()
+    {
+        ParseNode *node = new ParseNode("Factor");
+        Token t = peek();
+        if (t.lexeme == "(")
+        {
+            node->addChild(match("("));
+            node->addChild(Expr());
+            node->addChild(match(")"));
+        }
+        else if (t.type == "identifier" || t.type == "number")
+        {
+            node->addChild(matchType(t.type));
+        }
+        else
+        {
+            error("Expected factor");
+        }
+        return node;
+    }
+
+public:
+    Parser(const vector<Token> &tokenList) : tokens(tokenList), current(0) {}
+
+    void parse()
+    {
+        ParseNode *root = Function();
+        if (current != tokens.size())
+        {
+            error("Unexpected token at end");
+        }
+        cout << "Parse Tree:\n";
+        root->print();
+    }
+};
 int main()
 {
     readCSV("punctuations.csv", punctuations);
@@ -537,7 +928,12 @@ int main()
     readCSV("numbers.csv", numbers);
     readCSV("identifiers.csv", identifiers);
     readCSV("operators.csv", operators);
-    Compile("source.txt");
+    vector<Token> tokens = Compile("source.txt");
+    cout << "\n\nParsing: " << endl;
+    if (tokens[0].lexeme == "Adadi")
+        cout << "Token 0: " << tokens[0].lexeme << endl;
+    Parser parser(tokens);
+    parser.parse();
 
     return 0;
 }
